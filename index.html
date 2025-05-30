@@ -1,0 +1,306 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Mines Game</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.2/p5.min.js"></script>
+    <style>
+        body {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #1a1a1a;
+            font-family: Arial, sans-serif;
+            color: #fff;
+            overflow: hidden;
+        }
+        canvas {
+            border: 2px solid #fff;
+            max-width: 100%;
+            max-height: 80vh;
+        }
+        #game-ui {
+            text-align: center;
+            margin: 10px 0;
+        }
+        #mine-count {
+            width: 60px;
+            padding: 5px;
+            font-size: 16px;
+            margin: 5px;
+        }
+        #start-button, #reveal-next-button {
+            padding: 10px 20px;
+            font-size: 16px;
+            margin: 5px;
+            cursor: pointer;
+            background-color: #4CAF50;
+            border: none;
+            color: white;
+            border-radius: 5px;
+        }
+        #reveal-next-button:disabled {
+            background-color: #555;
+            cursor: not-allowed;
+        }
+        #game-over {
+            position: absolute;
+            text-align: center;
+            color: red;
+            font-size: 6vw;
+            background-color: rgba(0, 0, 0, 0.7);
+            padding: 10px;
+            border-radius: 5px;
+            display: none;
+        }
+        @media (max-width: 600px) {
+            canvas {
+                width: 90vw;
+                height: 90vw;
+            }
+            #game-over {
+                font-size: 8vw;
+                padding: 15px;
+            }
+            #mine-count, #start-button, #reveal-next-button {
+                font-size: 14px;
+                padding: 8px 15px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="game-ui">
+        <label for="mine-count">Mines (1-24):</label>
+        <input type="number" id="mine-count" min="1" max="24" value="5">
+        <button id="start-button">Start Game</button>
+        <button id="reveal-next-button" disabled>Reveal Next</button>
+        <div id="score-display">Score: 0 (Multiplier: 1.0x)</div>
+    </div>
+    <div id="game-over">Game Over! Tap/Click to Restart</div>
+    <script>
+        let grid = [];
+        let rows = 5;
+        let cols = 5;
+        let cellSize;
+        let score = 0;
+        let multiplier = 1.0;
+        let gameOver = false;
+        let gameStarted = false;
+        let mineCount = 5;
+        let safeTilesRemaining = 0;
+
+        function setup() {
+            let canvasSize = min(windowWidth * 0.9, windowHeight * 0.8, 400);
+            createCanvas(canvasSize, canvasSize);
+            cellSize = width / cols;
+            resetGame();
+            document.getElementById('start-button').addEventListener('click', startGame);
+            document.getElementById('reveal-next-button').addEventListener('click', revealNextSafe);
+        }
+
+        function draw() {
+            background(50);
+            for (let i = 0; i < rows; i++) {
+                for (let j = 0; j < cols; j++) {
+                    grid[i][j].show();
+                }
+            }
+            updateScoreDisplay();
+        }
+
+        function mousePressed() {
+            handleInput(mouseX, mouseY);
+            return false;
+        }
+
+        function touchStarted() {
+            handleInput(mouseX, mouseY);
+            return false;
+        }
+
+        function handleInput(x, y) {
+            if (!gameStarted || gameOver) {
+                if (gameOver) resetGame();
+                return;
+            }
+            for (let i = 0; i < rows; i++) {
+                for (let j = 0; j < cols; j++) {
+                    if (grid[i][j].contains(x, y)) {
+                        grid[i][j].reveal();
+                        if (grid[i][j].isMine) {
+                            gameOver = true;
+                            score = 0;
+                            multiplier = 1.0;
+                            document.getElementById('game-over').innerText = 'Game Over! Hit a Mine! Tap/Click to Restart';
+                            document.getElementById('game-over').style.display = 'block';
+                            document.getElementById('reveal-next-button').disabled = true;
+                        } else {
+                            score += 10;
+                            multiplier += 0.1;
+                            safeTilesRemaining--;
+                            if (safeTilesRemaining === 0) {
+                                gameOver = true;
+                                document.getElementById('game-over').innerText = `You Win! Score: ${score} (Multiplier: ${multiplier.toFixed(1)}x)`;
+                                document.getElementById('game-over').style.display = 'block';
+                                document.getElementById('reveal-next-button').disabled = true;
+                            } else {
+                                document.getElementById('reveal-next-button').disabled = false;
+                            }
+                        }
+                        updateScoreDisplay();
+                        return;
+                    }
+                }
+            }
+        }
+
+        function startGame() {
+            mineCount = parseInt(document.getElementById('mine-count').value);
+            if (mineCount < 1 || mineCount > 24) mineCount = 5;
+            resetGame();
+            gameStarted = true;
+            document.getElementById('start-button').innerText = 'Restart';
+            document.getElementById('reveal-next-button').disabled = true;
+        }
+
+        function revealNextSafe() {
+            if (!gameStarted || gameOver) return;
+            for (let i = 0; i < rows; i++) {
+                for (let j = 0; j < cols; j++) {
+                    if (!grid[i][j].revealed && !grid[i][j].isMine) {
+                        grid[i][j].reveal();
+                        score += 10;
+                        multiplier += 0.1;
+                        safeTilesRemaining--;
+                        if (safeTilesRemaining === 0) {
+                            gameOver = true;
+                            document.getElementById('game-over').innerText = `You Win! Score: ${score} (Multiplier: ${multiplier.toFixed(1)}x)`;
+                            document.getElementById('game-over').style.display = 'block';
+                            document.getElementById('reveal-next-button').disabled = true;
+                        }
+                        updateScoreDisplay();
+                        return;
+                    }
+                }
+            }
+        }
+
+        function resetGame() {
+            grid = [];
+            for (let i = 0; i < rows; i++) {
+                grid[i] = [];
+                for (let j = 0; j < cols; j++) {
+                    grid[i][j] = new Cell(i, j, cellSize);
+                }
+            }
+            placeMines(mineCount);
+            score = 0;
+            multiplier = 1.0;
+            safeTilesRemaining = rows * cols - mineCount;
+            gameOver = false;
+            gameStarted = false;
+            document.getElementById('game-over').style.display = 'none';
+            document.getElementById('start-button').innerText = 'Start Game';
+            document.getElementById('reveal-next-button').disabled = true;
+            updateScoreDisplay();
+        }
+
+        function placeMines(numMines) {
+            let placed = 0;
+            while (placed < numMines) {
+                let i = floor(random(rows));
+                let j = floor(random(cols));
+                if (!grid[i][j].isMine) {
+                    grid[i][j].isMine = true;
+                    placed++;
+                }
+            }
+        }
+
+        function updateScoreDisplay() {
+            document.getElementById('score-display').innerText = `Score: ${score} (Multiplier: ${multiplier.toFixed(1)}x)`;
+        }
+
+        class Cell {
+            constructor(i, j, size) {
+                this.i = i;
+                this.j = j;
+                this.x = j * size;
+                this.y = i * size;
+                this.size = size;
+                this.isMine = false;
+                this.revealed = false;
+            }
+
+            show() {
+                stroke(255);
+                noFill();
+                rect(this.x, this.y, this.size, this.size);
+                if (this.revealed) {
+                    if (this.isMine) {
+                        fill(255, 0, 0);
+                        ellipse(this.x + this.size / 2, this.y + this.size / 2, this.size * 0.5);
+                    } else {
+                        fill(0, 255, 0);
+                        rect(this.x, this.y, this.size, this.size);
+                    }
+                }
+            }
+
+            contains(x, y) {
+                return x > this.x && x < this.x + this.size && y > this.y && y < this.y + this.size;
+            }
+
+            reveal() {
+                if (!this.revealed && !gameOver) {
+                    this.revealed = true;
+                }
+            }
+        }
+    </script>
+</body>
+</html>
