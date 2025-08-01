@@ -1,4 +1,4 @@
 # game
 first repository
 <br>
-Author - Kiran
+Author - Kiran(student)
